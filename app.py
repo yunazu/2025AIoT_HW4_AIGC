@@ -1,84 +1,59 @@
 import streamlit as st
 from google import genai
-from google.genai import types
-import yt_dlp
 import os
 import time
 
 # --- 頁面配置 ---
 st.set_page_config(page_title="Music Insight AI", page_icon="🎧", layout="wide")
-st.title("🎧 音樂深度導聆：音訊與意境全分析")
+st.title("🎧 音樂深度導聆：音訊與歌詞全分析")
+st.markdown("請上傳您的音樂檔案並貼上相關資訊，讓 Gemini 2.0 為您導讀。")
 
 # --- API 設定 ---
 if "GEMINI_API_KEY" in st.secrets:
     api_key = st.secrets["GEMINI_API_KEY"]
 else:
-    api_key = st.sidebar.text_input("輸入 Gemini API Key", type="password")
+    api_key = st.sidebar.text_input("1. 輸入 Gemini API Key", type="password")
 
 if api_key:
     client = genai.Client(api_key=api_key)
 
-    # --- 下載 YouTube 音訊與資訊欄 ---
-    def process_youtube(url):
-        ydl_opts = {
-            'format': 'bestaudio/best',
-            'outtmpl': 'temp_audio.%(ext)s',
-            # 關鍵修正：模擬播放器客戶端，避開 403 錯誤
-            'extractor_args': {
-                'youtube': {
-                    'player_client': ['web', 'default'],
-                    'player_js_version': ['actual']
-                }
-            },
-            'postprocessors': [{
-                'key': 'FFmpegExtractAudio',
-                'preferredcodec': 'mp3',
-                'preferredquality': '192',
-            }],
-            'quiet': True,
-            'no_warnings': True,
-            'nocheckcertificate': True,
-        }
-        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-            # 先獲取資訊
-            info = ydl.extract_info(url, download=True)
-            description = info.get('description', '')
-            title = info.get('title', '')
-            # 取得下載後的檔名（確保副檔名正確）
-            audio_path = ydl.prepare_filename(info).replace(f".{info['ext']}", ".mp3")
-            return description, title, audio_path
-
     # --- UI 介面 ---
-    yt_url = st.text_input("請輸入 YouTube 歌曲連結：", placeholder="https://www.youtube.com/watch?v=...")
+    col1, col2 = st.columns([1, 1])
+    
+    with col1:
+        st.subheader("📁 上傳音樂")
+        uploaded_file = st.file_uploader("選擇音訊檔案 (mp3, wav, m4a)", type=['mp3', 'wav', 'm4a'])
+        
+    with col2:
+        st.subheader("📝 歌詞或資訊欄內容")
+        raw_text = st.text_area("請貼上 YouTube 資訊欄或歌詞內容：", height=200, placeholder="在此貼上文字...")
 
-    if st.button("🚀 開始深度導聆分析"):
-        if not yt_url:
-            st.warning("請先輸入連結")
+    if st.button("🚀 開始執行 AI 深度分析"):
+        if not uploaded_file or not raw_text:
+            st.warning("請確保已上傳音訊且已貼上文字內容。")
         else:
             try:
-                with st.spinner("1. 正在從 YouTube 擷取音訊與資訊欄..."):
-                    description, title, audio_path = process_youtube(yt_url)
-                
-                with st.spinner("2. 正在上傳音訊至 Gemini File API..."):
-                    # 上傳音訊檔案
-                    audio_file = client.files.upload(file=audio_path)
-                    # 等待檔案處理（音訊檔案通常需要幾秒鐘讓系統準備）
+                # 1. 儲存暫存檔
+                with open("temp_audio.mp3", "wb") as f:
+                    f.write(uploaded_file.getbuffer())
+
+                with st.spinner("AI 正在聆聽音樂並閱讀文字中..."):
+                    # 2. 上傳至 Google File API
+                    audio_file = client.files.upload(file="temp_audio.mp3")
                     while audio_file.state.name == "PROCESSING":
                         time.sleep(2)
                         audio_file = client.files.get(name=audio_file.name)
 
-                with st.spinner("3. AI 正在聆聽並閱讀意境..."):
+                    # 3. 執行多模態分析
                     prompt = f"""
-                    影片標題：{title}
-                    資訊欄文字：{description}
+                    以下是這首歌的相關文字資訊：
+                    {raw_text}
 
-                    請執行以下多重任務：
-                    1. 【歌詞過濾】：從資訊欄中提取純歌詞，但不需要輸出給我，而是分析它。如果沒有歌詞，請註明「資訊欄未提供歌詞」。
-                    2. 【音訊特徵分析】：你現在具備聽覺。請分析這首音軌的音樂風格、主導樂器（如：合成器、電吉他、鋼琴）以及節奏感。
-                    3. 【意境與情感】：結合歌詞與旋律，深入解析這首歌傳達的情感意境。
-                    4. 【視覺化建議】：如果這首歌要拍一段 MV，你會建議什麼樣的色調與視覺場景？
-                    
-                    請用繁體中文回答，並以精美的 Markdown 格式與標題呈現。輸出不超過750個字
+                    任務：
+                    1. 【歌詞過濾】：從文字內容中提取純歌詞，過濾掉無關資訊。
+                    2. 【聽感分析】：根據音軌分析音樂風格、主導樂器、節奏情緒。
+                    3. 【深度導讀】：結合歌詞意境與旋律，撰寫一段 300 字的深度賞析。
+                    4. 【視覺描述】：為這首歌設計一個 MV 視覺場景描述。
                     """
                     
                     response = client.models.generate_content(
@@ -88,14 +63,13 @@ if api_key:
 
                 # --- 顯示結果 ---
                 st.success("分析完成！")
-                st.subheader(f"🎵 歌曲分析報告：{title}")
                 st.markdown(response.text)
                 
-                # 清理暫存檔
-                os.remove(audio_path)
+                # 清理
                 client.files.delete(name=audio_file.name)
+                os.remove("temp_audio.mp3")
 
             except Exception as e:
                 st.error(f"發生錯誤：{str(e)}")
 else:
-    st.info("請先輸入 API Key 以開始使用。")
+    st.info("請在側邊欄輸入 API Key 以開始。")
