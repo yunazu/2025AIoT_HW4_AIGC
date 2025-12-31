@@ -1,74 +1,87 @@
 import streamlit as st
 from google import genai
+from google.genai import types
+import yt_dlp
+import os
+import time
 
-# --- 1. 頁面設定 ---
-st.set_page_config(page_title="AI 影音摘要助手", page_icon="📝", layout="wide")
-st.title("📝 智慧影音摘要與視覺化系統 (v2.0)")
-st.markdown("本工具採用最新的 Gemini 2.0 Flash-Lite 模型，為您快速提取長文精華。")
+# --- 頁面配置 ---
+st.set_page_config(page_title="Music Insight AI", page_icon="🎧", layout="wide")
+st.title("🎧 音樂深度導聆：音訊與意境全分析")
 
-# --- 2. 部署安全性：API Key 輸入 ---
-# 提供兩種方式：優先讀取 Streamlit Secrets，若無則顯示輸入框
+# --- API 設定 ---
 if "GEMINI_API_KEY" in st.secrets:
-    api_key_input = st.secrets["GEMINI_API_KEY"]
+    api_key = st.secrets["GEMINI_API_KEY"]
 else:
-    with st.sidebar:
-        st.header("🔑 API 設定")
-        api_key_input = st.text_input("輸入 Google API Key:", type="password", help="請至 Google AI Studio 申請免費金鑰")
-        st.info("提示：輸入的 Key 僅供本次連線使用，不會被儲存。")
+    api_key = st.sidebar.text_input("輸入 Gemini API Key", type="password")
 
-# --- 3. 初始化 Client ---
-if api_key_input:
-    client = genai.Client(api_key=api_key_input)
+if api_key:
+    client = genai.Client(api_key=api_key)
 
-# --- 4. UI 介面 ---
-user_input = st.text_area("請貼上文章、逐字稿或新聞內容：", height=250, placeholder="在此輸入內容...")
+    # --- 下載 YouTube 音訊與資訊欄 ---
+    def process_youtube(url):
+        ydl_opts = {
+            'format': 'bestaudio/best',
+            'outtmpl': 'temp_audio.%(ext)s',
+            'postprocessors': [{
+                'key': 'FFmpegExtractAudio',
+                'preferredcodec': 'mp3',
+                'preferredquality': '192',
+            }],
+            'quiet': True,
+        }
+        with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            info = ydl.extract_info(url, download=True)
+            return info.get('description', ''), info.get('title', ''), "temp_audio.mp3"
 
-# 功能選項
-col_opt1, col_opt2 = st.columns(2)
-with col_opt1:
-    summary_style = st.selectbox("摘要風格", ["簡潔重點", "詳細分析", "專業評論"])
-with col_opt2:
-    output_language = st.selectbox("輸出語言", ["繁體中文", "English", "日本語"])
+    # --- UI 介面 ---
+    yt_url = st.text_input("請輸入 YouTube 歌曲連結：", placeholder="https://www.youtube.com/watch?v=...")
 
-if st.button("🚀 開始執行 AI 分析"):
-    if not api_key_input:
-        st.error("❌ 請先在左側輸入 API Key 才能執行！")
-    elif not user_input:
-        st.warning("⚠️ 請輸入需要分析的內容。")
-    else:
-        try:
-            with st.spinner('Gemini 2.5 正在分析中...'):
-                # 任務 A: 生成摘要
-                prompt_text = f"你是一個專業的內容摘要專家。請用{output_language}，以{summary_style}的風格，摘要以下內容：\n\n{user_input}"
+    if st.button("🚀 開始深度導聆分析"):
+        if not yt_url:
+            st.warning("請先輸入連結")
+        else:
+            try:
+                with st.spinner("1. 正在從 YouTube 擷取音訊與資訊欄..."):
+                    description, title, audio_path = process_youtube(yt_url)
                 
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash-lite', 
-                    contents=prompt_text
-                )
-                
-                # 任務 B: 生成視覺化建議 (延伸亮點)
-                visual_prompt = f"根據這段摘要內容：'{response.text}'。請寫出一段適合給 AI 繪圖工具(如 DALL-E)使用的英文提示詞(Prompt)，描述一個能代表本文意境的場景。"
-                response_visual = client.models.generate_content(
-                    model='gemini-2.5-flash-lite',
-                    contents=visual_prompt
-                )
+                with st.spinner("2. 正在上傳音訊至 Gemini File API..."):
+                    # 上傳音訊檔案
+                    audio_file = client.files.upload(file=audio_path)
+                    # 等待檔案處理（音訊檔案通常需要幾秒鐘讓系統準備）
+                    while audio_file.state.name == "PROCESSING":
+                        time.sleep(2)
+                        audio_file = client.files.get(name=audio_file.name)
 
-            # --- 5. 顯示結果 ---
-            st.divider()
-            res_col1, res_col2 = st.columns([2, 1])
-            
-            with res_col1:
-                st.subheader("📌 AI 摘要結果")
+                with st.spinner("3. AI 正在聆聽並閱讀意境..."):
+                    prompt = f"""
+                    影片標題：{title}
+                    資訊欄文字：{description}
+
+                    請執行以下多重任務：
+                    1. 【歌詞過濾】：從資訊欄中提取純歌詞，但不需要輸出給我，而是分析它。如果沒有歌詞，請註明「資訊欄未提供歌詞」。
+                    2. 【音訊特徵分析】：你現在具備聽覺。請分析這首音軌的音樂風格、主導樂器（如：合成器、電吉他、鋼琴）以及節奏感。
+                    3. 【意境與情感】：結合歌詞與旋律，深入解析這首歌傳達的情感意境。
+                    4. 【視覺化建議】：如果這首歌要拍一段 MV，你會建議什麼樣的色調與視覺場景？
+                    
+                    請用繁體中文回答，並以精美的 Markdown 格式與標題呈現。輸出不超過750個字
+                    """
+                    
+                    response = client.models.generate_content(
+                        model='gemini-2.0-flash-lite',
+                        contents=[audio_file, prompt]
+                    )
+
+                # --- 顯示結果 ---
+                st.success("分析完成！")
+                st.subheader(f"🎵 歌曲分析報告：{title}")
                 st.markdown(response.text)
-            
-            with res_col2:
-                st.subheader("🎨 視覺化延伸描述")
-                st.success(response_visual.text)
-                st.caption("提示：您可以將上方英文複製到 Stable Diffusion 或 Midjourney 生成圖片。")
+                
+                # 清理暫存檔
+                os.remove(audio_path)
+                client.files.delete(name=audio_file.name)
 
-        except Exception as e:
-            st.error(f"連線錯誤: {str(e)}")
-
-# --- 6. 頁尾 ---
-st.divider()
-st.caption("Taica AIGC Course Project | Powered by Gemini 2.5 Flash-Lite")
+            except Exception as e:
+                st.error(f"發生錯誤：{str(e)}")
+else:
+    st.info("請先輸入 API Key 以開始使用。")
