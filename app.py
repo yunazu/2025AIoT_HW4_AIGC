@@ -23,16 +23,30 @@ if api_key:
         ydl_opts = {
             'format': 'bestaudio/best',
             'outtmpl': 'temp_audio.%(ext)s',
+            # 關鍵修正：模擬播放器客戶端，避開 403 錯誤
+            'extractor_args': {
+                'youtube': {
+                    'player_client': ['web', 'default'],
+                    'player_js_version': ['actual']
+                }
+            },
             'postprocessors': [{
                 'key': 'FFmpegExtractAudio',
                 'preferredcodec': 'mp3',
                 'preferredquality': '192',
             }],
             'quiet': True,
+            'no_warnings': True,
+            'nocheckcertificate': True,
         }
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+            # 先獲取資訊
             info = ydl.extract_info(url, download=True)
-            return info.get('description', ''), info.get('title', ''), "temp_audio.mp3"
+            description = info.get('description', '')
+            title = info.get('title', '')
+            # 取得下載後的檔名（確保副檔名正確）
+            audio_path = ydl.prepare_filename(info).replace(f".{info['ext']}", ".mp3")
+            return description, title, audio_path
 
     # --- UI 介面 ---
     yt_url = st.text_input("請輸入 YouTube 歌曲連結：", placeholder="https://www.youtube.com/watch?v=...")
